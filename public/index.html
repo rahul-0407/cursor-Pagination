@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Browser</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">Product<span>Browser</span></div>
+  <span id="total-badge">Loading...</span>
+</header>
+
+<main>
+  <div class="controls">
+    <select id="category-select">
+      <option value="">All categories</option>
+    </select>
+    <button class="btn-ghost" id="reset-btn">Reset</button>
+    <span id="status"></span>
+  </div>
+
+  <div id="grid"></div>
+
+  <div class="pagination">
+    <button class="btn-ghost" id="prev-btn" disabled>← Prev</button>
+    <span id="page-info">Page 1</span>
+    <button class="btn-primary" id="next-btn" disabled>Next →</button>
+  </div>
+</main>
+
+<script>
+  const LIMIT = 20
+
+  // Cursor history lets us go backwards — we push cursors as we go forward,
+  // and pop them to go back. Index 0 = first page (no cursor).
+  let cursorHistory = [null]
+  let currentPage = 0
+  let currentCategory = ''
+
+  const grid = document.getElementById('grid')
+  const nextBtn = document.getElementById('next-btn')
+  const prevBtn = document.getElementById('prev-btn')
+  const pageInfo = document.getElementById('page-info')
+  const categorySelect = document.getElementById('category-select')
+  const statusEl = document.getElementById('status')
+  const totalBadge = document.getElementById('total-badge')
+  const resetBtn = document.getElementById('reset-btn')
+
+  // Load category list for the dropdown
+  async function loadCategories() {
+    const res = await fetch('/api/products/categories')
+    const { categories } = await res.json()
+    categories.forEach(cat => {
+      const opt = document.createElement('option')
+      opt.value = cat
+      opt.textContent = cat
+      categorySelect.appendChild(opt)
+    })
+  }
+
+  function showSkeletons() {
+    grid.innerHTML = Array.from({ length: LIMIT }, () => `
+      <div class="skeleton">
+        <div class="skel-line" style="height:18px;width:60px"></div>
+        <div class="skel-line" style="height:20px;width:85%"></div>
+        <div class="skel-line" style="height:20px;width:65%"></div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          <div class="skel-line" style="height:22px;width:70px"></div>
+          <div class="skel-line" style="height:16px;width:80px"></div>
+        </div>
+      </div>
+    `).join('')
+  }
+
+  function formatDate(iso) {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  function renderProducts(products) {
+    if (!products.length) {
+      grid.innerHTML = '<div id="empty">No products found.</div>'
+      return
+    }
+
+    grid.innerHTML = products.map(p => `
+      <div class="card">
+        <span class="card-category">${p.category}</span>
+        <div class="card-name">${p.name}</div>
+        <div class="card-footer">
+          <span class="card-price">$${p.price.toFixed(2)}</span>
+          <span class="card-date">${formatDate(p.createdAt)}</span>
+        </div>
+      </div>
+    `).join('')
+  }
+
+  async function fetchPage(cursor) {
+    showSkeletons()
+    nextBtn.disabled = true
+    prevBtn.disabled = true
+    statusEl.textContent = 'Loading...'
+z
+    const params = new URLSearchParams({ limit: LIMIT })
+    if (cursor) params.set('cursor', cursor)
+    if (currentCategory) params.set('category', currentCategory)
+
+    try {
+      const t0 = performance.now()
+      const res = await fetch(`/api/products?${params}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const ms = Math.round(performance.now() - t0)
+
+      renderProducts(data.data)
+
+      // If we got a nextCursor that isn't already in history, push it
+      if (data.nextCursor && cursorHistory[currentPage + 1] !== data.nextCursor) {
+        cursorHistory = cursorHistory.slice(0, currentPage + 1) // trim forward history on new branch
+        cursorHistory.push(data.nextCursor)
+      }
+
+      nextBtn.disabled = !data.hasMore
+      prevBtn.disabled = currentPage === 0
+      pageInfo.textContent = `Page ${currentPage + 1}`
+      statusEl.textContent = `${data.count} products · ${ms}ms`
+      totalBadge.textContent = currentCategory
+        ? `Filtered: ${currentCategory}`
+        : '~200,000 products'
+
+    } catch (err) {
+      grid.innerHTML = '<div id="error-msg">Failed to load products. Check your connection.</div>'
+      statusEl.textContent = 'Error'
+      console.error(err)
+    }
+  }
+
+  nextBtn.addEventListener('click', () => {
+    currentPage++
+    fetchPage(cursorHistory[currentPage])
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  })
+
+  prevBtn.addEventListener('click', () => {
+    currentPage--
+    fetchPage(cursorHistory[currentPage])
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  })
+
+  categorySelect.addEventListener('change', () => {
+    currentCategory = categorySelect.value
+    cursorHistory = [null]
+    currentPage = 0
+    fetchPage(null)
+  })
+
+  resetBtn.addEventListener('click', () => {
+    categorySelect.value = ''
+    currentCategory = ''
+    cursorHistory = [null]
+    currentPage = 0
+    fetchPage(null)
+  })
+
+  // Init
+  loadCategories()
+  fetchPage(null)
+</script>
+</body>
+</html>
